@@ -30,7 +30,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Archeo Lucky Browser  ·  v1.8.1 — TOGGLE ATRASAR SAQUE (delay seletivo vs total)
+ * Archeo Lucky Browser  ·  v1.8.2 — FIX "sempre tira no server real" + WS+fetch/XHR total
  * ==============================================================
  *  1. Abre o Google num WebView;
  *  2. Detecta e anuncia os jogos:
@@ -47,6 +47,10 @@ import kotlin.math.roundToInt
  *     Login feito na 2ª janela compartilha cookies (mesma plataforma).
  *  7. v1.8.1: ATRASAR SAQUE toggle — NÃO=seletivo (só chega, paga X real, seguro)
  *     SIM=total (chega+vai com filtro bet/cashout, paga X exibido, FLEW AWAY atrasa)
+ *  8. v1.8.2: FIX v1.8.1 não atrasava no server real — isBetPayload não pegava payload
+ *     binário/MessagePack e bet via fetch/XHR; agora patch WS+fetch/XHR com filtro amplo
+ *     (cashout/makeBet/ifc.*) e logs [WS SEND ATRASADO] no console para prova real.
+ *     Testado contornando Retry limit / 403 app-config com patchV182.
  *
  * Engines automáticos (rodam DENTRO do frame do jogo):
  *   · Archéo   (SplitThePot, Angular+SVG) -> button[tile] / COMEÇAR / CASHOUT
@@ -992,105 +996,180 @@ class MainActivity : android.app.Activity() {
             window.__archeoLuckyWatcher = true;
             var AV_DELAY = 0;
             var AV_DELAY_TOTAL = false;
-            // === v1.8.1 NetLimiter com toggle ATRASAR SAQUE ===
-            // false (NÃO) = seletivo: atrasa só CHEGA (onmessage), send instantâneo → paga X real (seguro)
-            // true  (SIM) = total:    atrasa CHEGA + VAI (send bet/cashout) → paga X exibido, mas crash também atrasa no gráfico
+            // === v1.8.2 NetLimiter TOTAL (WS+fetch/XHR) — corrige "sempre tira no server real" ===
+            // false (NÃO) = seletivo: atrasa só CHEGA (onmessage), bet/cashout instantâneo → paga X real (seguro)
+            // true  (SIM) = total:    atrasa CHEGA (tick/crash) + VAI (WS send + fetch/XHR bet/cashout) → paga X exibido, mas FLEW AWAY atrasa junto
             function __isBetPayload(data){
               try{
                 if(data==null) return false;
                 var s='';
                 if(typeof data==='string') s=data;
-                else if(data instanceof ArrayBuffer) { try{ s=new TextDecoder().decode(data); }catch(e){ s=''; } }
+                else if(data instanceof ArrayBuffer){ try{ s=new TextDecoder().decode(new Uint8Array(data)); }catch(e){} }
+                else if(ArrayBuffer.isView(data)){ try{ s=new TextDecoder().decode(data); }catch(e){} }
                 else { try{ s=String(data); }catch(e){ s=''; } }
-                return /cash\s*out|cashout|\"bet\"|bet|cash/i.test(s);
+                return /cash\s*out|cashout|make\.bet|makeBet|ifc\.cashout|ifc\.make\.bet|\"bet\"|\bbet\b/i.test(s);
               }catch(e){ return false; }
+            }
+            function __isBetUrl(url){
+              try{ return /bet|cash|MakeBet|CashOut|ifc\.cashout|ifc\.make/i.test(String(url)); }catch(e){return false;}
+            }
+            function __isBetBody(body){
+              try{
+                if(!body) return false;
+                if(typeof body==='string') return __isBetPayload(body);
+                if(body instanceof URLSearchParams) return __isBetPayload(body.toString());
+                if(body instanceof FormData) return false;
+                if(body instanceof Blob) return false;
+                if(body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return __isBetPayload(body);
+                try{ return __isBetPayload(JSON.stringify(body)); }catch(e){ return __isBetPayload(String(body)); }
+              }catch(e){return false;}
             }
             function __patchWS(win){
               try{
-                if(!win || !win.WebSocket) return;
-                if(win.WebSocket.__patchedDelay) return;
-                var OrigWS = win.WebSocket;
-                var proto = OrigWS.prototype;
-                if(proto && !proto.__patchedDelay){
-                  var origAdd = proto.addEventListener;
-                  proto.addEventListener = function(type, listener, opts){
-                    if(type==='message' && typeof listener==='function'){
-                      var orig = listener;
-                      var wrapped = function(ev){
-                        if(AV_DELAY>0){
-                          var self=this, a=arguments;
-                          setTimeout(function(){ try{ orig.apply(self, a); }catch(e){} }, AV_DELAY);
-                        } else orig.apply(this, arguments);
-                      };
-                      wrapped.__orig = orig;
-                      return origAdd.call(this, type, wrapped, opts);
-                    }
-                    return origAdd.call(this, type, listener, opts);
-                  };
-                  proto.__patchedDelay = true;
-                  var origSend = proto.send;
-                  if(origSend && !origSend.__patchedDelay){
-                    proto.send = function(data){
-                      try{
-                        if(AV_DELAY>0 && AV_DELAY_TOTAL && __isBetPayload(data)){
-                          var self=this, args=arguments;
-                          setTimeout(function(){ try{ origSend.apply(self, args); }catch(e){} }, AV_DELAY);
-                          return;
-                        }
-                      }catch(e2){}
-                      return origSend.apply(this, arguments);
+                if(!win) return;
+                // --- WebSocket (tick/crash + bet/cashout) ---
+                if(win.WebSocket && !win.WebSocket.__patchedV182){
+                  var OrigWS = win.WebSocket;
+                  var proto = OrigWS.prototype;
+                  if(proto && !proto.__patchedV182){
+                    var origAdd = proto.addEventListener;
+                    proto.addEventListener = function(type, listener, opts){
+                      if(type==='message' && typeof listener==='function'){
+                        var orig = listener;
+                        var wrapped = function(ev){
+                          if(AV_DELAY>0){
+                            var self=this, a=arguments;
+                            setTimeout(function(){ try{ orig.apply(self, a); }catch(e){} }, AV_DELAY);
+                          } else orig.apply(this, arguments);
+                        };
+                        wrapped.__orig = orig;
+                        return origAdd.call(this, type, wrapped, opts);
+                      }
+                      return origAdd.call(this, type, listener, opts);
                     };
-                    proto.send.__patchedDelay = true;
-                  }
-                }
-                try{
-                  var desc = Object.getOwnPropertyDescriptor(proto, 'onmessage');
-                  if(desc && desc.set && !desc.set.__patchedDelay){
-                    var oSet = desc.set, oGet = desc.get;
-                    Object.defineProperty(proto, 'onmessage', {
-                      get: oGet,
-                      set: function(fn){
-                        if(typeof fn==='function'){
-                          var origFn = fn;
-                          var wrapped = function(ev){
-                            if(AV_DELAY>0){
-                              var self=this;
-                              setTimeout(function(){ try{ origFn.call(self, ev); }catch(e){} }, AV_DELAY);
-                            } else origFn.call(this, ev);
-                          };
-                          wrapped.__orig = origFn;
-                          oSet.call(this, wrapped);
-                        } else oSet.call(this, fn);
-                      },
-                      configurable:true
-                    });
-                    desc.set.__patchedDelay = true;
-                  }
-                }catch(e2){}
-                var WrappedWS = function(url, protocols){
-                  var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
-                  try{
-                    var origInstSend = ws.send;
-                    if(origInstSend && !origInstSend.__patchedDelay){
-                      ws.send = function(data){
+                    proto.__patchedV182 = true;
+                    var origSend = proto.send;
+                    if(origSend && !origSend.__patchedV182){
+                      proto.send = function(data){
                         try{
                           if(AV_DELAY>0 && AV_DELAY_TOTAL && __isBetPayload(data)){
                             var self=this, args=arguments;
-                            setTimeout(function(){ try{ origInstSend.apply(self, args); }catch(e){} }, AV_DELAY);
+                            console.log('[WS SEND ATRASADO '+AV_DELAY+'ms] '+String(data).slice(0,160));
+                            setTimeout(function(){ try{ origSend.apply(self, args); }catch(e){ console.log('[WS SEND ERR]',e.message); } }, AV_DELAY);
                             return;
                           }
-                        }catch(e3){}
-                        return origInstSend.apply(this, arguments);
+                          if(__isBetPayload(data)) console.log('[WS SEND INSTANT] '+String(data).slice(0,160));
+                        }catch(e2){}
+                        return origSend.apply(this, arguments);
                       };
-                      ws.send.__patchedDelay = true;
+                      proto.send.__patchedV182 = true;
                     }
-                  }catch(e3){}
-                  return ws;
-                };
-                WrappedWS.prototype = proto;
-                WrappedWS.__patchedDelay = true;
-                try{ Object.setPrototypeOf(WrappedWS, OrigWS); }catch(e){}
-                win.WebSocket = WrappedWS;
+                  }
+                  try{
+                    var desc = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+                    if(desc && desc.set && !desc.set.__patchedV182){
+                      var oSet = desc.set, oGet = desc.get;
+                      Object.defineProperty(proto, 'onmessage', {
+                        get: oGet,
+                        set: function(fn){
+                          if(typeof fn==='function'){
+                            var origFn = fn;
+                            var wrapped = function(ev){
+                              if(AV_DELAY>0){
+                                var self=this;
+                                setTimeout(function(){ try{ origFn.call(self, ev); }catch(e){} }, AV_DELAY);
+                              } else origFn.call(this, ev);
+                            };
+                            wrapped.__orig = origFn;
+                            oSet.call(this, wrapped);
+                          } else oSet.call(this, fn);
+                        },
+                        configurable:true
+                      });
+                      desc.set.__patchedV182 = true;
+                    }
+                  }catch(e2){}
+                  var WrappedWS = function(url, protocols){
+                    var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+                    try{
+                      var origInstSend = ws.send;
+                      if(origInstSend && !origInstSend.__patchedV182){
+                        ws.send = function(data){
+                          try{
+                            if(AV_DELAY>0 && AV_DELAY_TOTAL && __isBetPayload(data)){
+                              var self=this, args=arguments;
+                              console.log('[WS INST SEND ATRASADO '+AV_DELAY+'ms] '+String(data).slice(0,160));
+                              setTimeout(function(){ try{ origInstSend.apply(self, args); }catch(e){} }, AV_DELAY);
+                              return;
+                            }
+                            if(__isBetPayload(data)) console.log('[WS INST SEND INSTANT] '+String(data).slice(0,160));
+                          }catch(e3){}
+                          return origInstSend.apply(this, arguments);
+                        };
+                        ws.send.__patchedV182 = true;
+                      }
+                    }catch(e3){}
+                    return ws;
+                  };
+                  WrappedWS.prototype = proto;
+                  WrappedWS.__patchedV182 = true;
+                  try{ Object.setPrototypeOf(WrappedWS, OrigWS); }catch(e){}
+                  win.WebSocket = WrappedWS;
+                  win.WebSocket.__patchedV182 = true;
+                }
+                // --- fetch (fallback se bet for via HTTP) ---
+                try{
+                  if(win.fetch && !win.fetch.__patchedV182){
+                    var origFetch = win.fetch;
+                    win.fetch = function(input, init){
+                      try{
+                        var url = typeof input==='string' ? input : (input && input.url ? input.url : String(input));
+                        var body = init && init.body ? init.body : null;
+                        var isBet = __isBetUrl(url) || __isBetBody(body) || __isBetUrl(String(input));
+                        // não atrasa app-config
+                        if(url && url.includes('app-config')) isBet = false;
+                        if(AV_DELAY>0 && AV_DELAY_TOTAL && isBet){
+                          console.log('[FETCH ATRASADO '+AV_DELAY+'ms] '+String(url).slice(0,140));
+                          var ctx=this, args=arguments;
+                          return new Promise(function(res,rej){
+                            setTimeout(function(){ origFetch.apply(ctx,args).then(res,rej).catch(rej); }, AV_DELAY);
+                          });
+                        }
+                        if(isBet) console.log('[FETCH INSTANT] '+String(url).slice(0,140));
+                      }catch(e){}
+                      return origFetch.apply(this, arguments);
+                    };
+                    win.fetch.__patchedV182=true;
+                  }
+                }catch(e){}
+                // --- XMLHttpRequest (fallback) ---
+                try{
+                  var XHRProto = win.XMLHttpRequest && win.XMLHttpRequest.prototype;
+                  if(XHRProto && !XHRProto.__patchedV182){
+                    var origOpen = XHRProto.open;
+                    XHRProto.open = function(method, url){
+                      this._avUrl = url; this._avMethod = method;
+                      return origOpen.apply(this, arguments);
+                    };
+                    var origXHRSend = XHRProto.send;
+                    XHRProto.send = function(body){
+                      try{
+                        var url = this._avUrl || '';
+                        if(url && url.includes('app-config')) return origXHRSend.apply(this, arguments);
+                        var isBet = __isBetUrl(url) || __isBetBody(body);
+                        if(AV_DELAY>0 && AV_DELAY_TOTAL && isBet){
+                          console.log('[XHR ATRASADO '+AV_DELAY+'ms] '+String(url).slice(0,140));
+                          var self=this, args=arguments;
+                          setTimeout(function(){ origXHRSend.apply(self, args); }, AV_DELAY);
+                          return;
+                        }
+                        if(isBet) console.log('[XHR INSTANT] '+String(url).slice(0,140));
+                      }catch(e){}
+                      return origXHRSend.apply(this, arguments);
+                    };
+                    XHRProto.__patchedV182=true;
+                  }
+                }catch(e){}
               }catch(e){}
             }
             try{ __patchWS(window); }catch(e){}
