@@ -30,18 +30,22 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Archeo Lucky Browser  ·  v1.2
- * =============================
+ * Archeo Lucky Browser  ·  v1.7 — DELAY Aviator (NetLimiter moderno)
+ * ==============================================================
  *  1. Abre o Google num WebView;
  *  2. Detecta e anuncia os jogos:
  *       · ARCHÉO      -> toast "jogo Lindo com sucesso ✅✅"
  *       · MI MINES    -> toast "Mi Mines Carregado ✅✅✅"
- *  3. HUD com o SALDO em tempo real (FUN no Archéo, MZN no Mi Mines);
- *  4. Janela flutuante "G" com stake, nº de cliques, **nº de minas** e operação automática.
+ *       · AVIATOR     -> toast "Aviator Carregado ✅✅"
+ *  3. HUD com o SALDO em tempo real (FUN no Archéo, MZN no Mi Mines/Aviator);
+ *  4. Janela flutuante "G" com stake, nº de cliques, nº de minas e operação automática;
+ *  5. NOVO v1.7: DELAY do avião (0-5000ms) só no que VEM do servidor (coefficient),
+ *     não atrasa bet/cashout — avião lento, clique rápido.
  *
  * Engines automáticos (rodam DENTRO do frame do jogo):
  *   · Archéo   (SplitThePot, Angular+SVG) -> button[tile] / COMEÇAR / CASHOUT
  *   · Mi Mines (Spribe, canvas 5x5)       -> canvas hit-test por coordenada + BET / CASH OUT
+ *   · Aviator  (Spribe, SignalR)          -> leitura da fita de payouts + delay WS seletivo
  */
 class MainActivity : android.app.Activity() {
 
@@ -79,6 +83,8 @@ class MainActivity : android.app.Activity() {
     private lateinit var alvoValue: TextView
     private lateinit var btnRegra: TextView
     private lateinit var btnNomes: TextView
+    private lateinit var rowDelay: View
+    private lateinit var delayValue: TextView
 
     private val ui = Handler(Looper.getMainLooper())
     private var lastToastGame: String? = null
@@ -112,6 +118,7 @@ class MainActivity : android.app.Activity() {
     private var avRegra = "aposBaixa"          // aposBaixa | sempre
     private var avNomes = "anon"               // anon | apelido
     private var stakeAviator = 100.0
+    private var avDelay = 0                    // 0..5000 ms - NetLimiter moderno
 
     private val startUrl = "https://www.google.com/"
 
@@ -153,6 +160,8 @@ class MainActivity : android.app.Activity() {
         alvoValue = findViewById(R.id.alvoValue)
         btnRegra = findViewById(R.id.btnRegra)
         btnNomes = findViewById(R.id.btnNomes)
+        rowDelay = findViewById(R.id.rowDelay)
+        delayValue = findViewById(R.id.delayValue)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -167,6 +176,7 @@ class MainActivity : android.app.Activity() {
         refreshRegraLabel()
         refreshNomesLabel()
         refreshGaleUi()
+        refreshDelayLabel()
         updatePanelVisibility()
 
         val deepLink = intent?.dataString
@@ -296,6 +306,7 @@ class MainActivity : android.app.Activity() {
         rowAlvo.visibility = if (av) View.VISIBLE else View.GONE
         rowRegra.visibility = if (av) View.VISIBLE else View.GONE
         rowNomes.visibility = if (av) View.VISIBLE else View.GONE
+        rowDelay.visibility = if (av) View.VISIBLE else View.GONE
         rowMines.visibility = if (mm) View.VISIBLE else View.GONE
         rowClicks.visibility = if (av) View.GONE else View.VISIBLE
         rowGale.visibility = if (av) View.GONE else View.VISIBLE
@@ -408,6 +419,11 @@ class MainActivity : android.app.Activity() {
                 avNomes = nm
                 refreshNomesLabel()
             }
+            val dl = json.optInt("delay", -1)
+            if (dl >= 0 && dl != avDelay) {
+                avDelay = dl.coerceIn(0, 5000)
+                refreshDelayLabel()
+            }
         }
         val ck = json.optInt("clicks", clicksPerSession)
         val mn = json.optInt("mines", minesCount)
@@ -428,6 +444,7 @@ class MainActivity : android.app.Activity() {
                 append("\nstake ").append(money(stake))
                 append(" · alvo ").append(String.format(Locale.US, "%.2f", alvo).replace(".", ",")).append("x")
                 append(" · ").append(if (avRegra == "sempre") "sempre" else "após baixa")
+                if (avDelay > 0) append(" · delay ").append(avDelay).append("ms")
                 if (copyAlvo.isNotEmpty()) append("\nCOPY: ").append(copyAlvo)
             } else {
                 append("\nsessões: ").append(sessions)
@@ -586,6 +603,14 @@ class MainActivity : android.app.Activity() {
             avNomes = if (avNomes == "anon") "apelido" else "anon"
             refreshNomesLabel(); pushSettings()
         }
+        findViewById<TextView>(R.id.btnDelayMinus).setOnClickListener {
+            avDelay = (avDelay - 500).coerceAtLeast(0)
+            refreshDelayLabel(); pushSettings()
+        }
+        findViewById<TextView>(R.id.btnDelayPlus).setOnClickListener {
+            avDelay = (avDelay + 500).coerceAtMost(5000)
+            refreshDelayLabel(); pushSettings()
+        }
 
         btnCopy.setOnClickListener {
             if (copyAlvo.isNotEmpty()) {
@@ -659,6 +684,7 @@ class MainActivity : android.app.Activity() {
         sendToGame("setAlvo", JSONObject().put("value", alvo))
         sendToGame("setRegra", JSONObject().put("value", avRegra))
         sendToGame("setNomes", JSONObject().put("value", avNomes))
+        sendToGame("setDelay", JSONObject().put("value", avDelay))
         sendToGame("setGale", JSONObject().put("on", galeOn))
         sendToGame("setGaleMult", JSONObject().put("value", galeMult))
         sendToGame("setGaleLimit", JSONObject().put("value", galeLimit))
@@ -698,6 +724,11 @@ class MainActivity : android.app.Activity() {
         btnNomes.text = getString(
             if (avNomes == "apelido") R.string.nomes_apelido else R.string.nomes_anon
         )
+    }
+
+    private fun refreshDelayLabel() {
+        delayValue.text = if (avDelay == 0) "0 ms" else "${avDelay} ms"
+        delayValue.setTextColor(getColor(if (avDelay > 0) R.color.gold else R.color.muted))
     }
 
     private fun refreshStakeLabel() {
@@ -818,6 +849,46 @@ class MainActivity : android.app.Activity() {
           try {
             if (window.__archeoLuckyWatcher) { return; }
             window.__archeoLuckyWatcher = true;
+            var AV_DELAY = 0;
+            // === NetLimiter moderno (Aviator) - delay seletivo ===
+            // Atrasa só o que VEM do servidor (coefficient/multiplier), não o que VAI (bet/cashout).
+            // O jogo fica em câmera lenta mas seu toque de apostar/sacar chega na hora.
+            try {
+              (function(){
+                var OrigWS = window.WebSocket;
+                if (!OrigWS || OrigWS.__patchedDelay) return;
+                function isCoeff(d){
+                  if (typeof d !== 'string') return false;
+                  return d.indexOf('coefficient') !== -1 || d.indexOf('multiplier') !== -1 || d.indexOf('"c":') !== -1 || d.indexOf('payout') !== -1;
+                }
+                window.WebSocket = function(url, protocols){
+                  var ws = new OrigWS(url, protocols);
+                  var origAdd = ws.addEventListener.bind(ws);
+                  ws.addEventListener = function(type, listener, opts){
+                    if (type === 'message' && AV_DELAY > 0){
+                      var wrapped = function(ev){
+                        var data = ev.data;
+                        if (typeof data === 'string' && isCoeff(data)){
+                          ev.stopImmediatePropagation();
+                          setTimeout(function(){
+                            try { listener.call(ws, new MessageEvent('message', {data: data})); } catch(e){ listener.call(ws, ev); }
+                            if (ws.onmessage) try { ws.onmessage(new MessageEvent('message', {data: data})); } catch(e){}
+                          }, AV_DELAY);
+                          return;
+                        }
+                        listener.call(ws, ev);
+                      };
+                      return origAdd(type, wrapped, opts);
+                    }
+                    return origAdd(type, listener, opts);
+                  };
+                  return ws;
+                };
+                window.WebSocket.prototype = OrigWS.prototype;
+                window.WebSocket.__patchedDelay = true;
+                window.__setAvDelay = function(v){ AV_DELAY = Math.max(0, Math.min(5000, Number(v)||0)); post({type:'auto', game: game(), delay: AV_DELAY, running: AUTO.running, stake: AUTO.stake, clicks: AUTO.clicks, mines: AUTO.mines, alvo: AUTO.alvo, regra: AUTO.regra, nomes: AUTO.nomes, velas: AUTO.velas, galeStep: AUTO.galeStep}); };
+              })();
+            } catch(e){}
 
             var BRIDGE = 'ArcheoBridge';
             var AUTO = { running: false, stake: 1, clicks: 3, mines: 3,
@@ -897,7 +968,7 @@ class MainActivity : android.app.Activity() {
               post({ type: 'auto', game: game(), running: AUTO.running, sessions: AUTO.sessions,
                      wins: AUTO.wins, losses: AUTO.losses, stake: AUTO.stake,
                      clicks: AUTO.clicks, mines: AUTO.mines, alvo: AUTO.alvo,
-                     regra: AUTO.regra, nomes: AUTO.nomes, velas: AUTO.velas,
+                     regra: AUTO.regra, nomes: AUTO.nomes, velas: AUTO.velas, delay: AV_DELAY,
                      galeStep: AUTO.galeStep, galeOn: AUTO.galeOn });
               try {
                 if (game() === 'mimines') {
@@ -1610,6 +1681,10 @@ class MainActivity : android.app.Activity() {
                   report(); return true;
                 case 'setNomes':
                   AUTO.nomes = (String(d.value) === 'apelido') ? 'apelido' : 'anon';
+                  report(); return true;
+                case 'setDelay':
+                  AV_DELAY = Math.max(0, Math.min(5000, Number(d.value)||0));
+                  if (window.__setAvDelay) try { window.__setAvDelay(AV_DELAY); } catch(e){}
                   report(); return true;
                 case 'setClicks':
                   AUTO.clicks = Math.min(24, Math.max(1, Number(d.value) || 3));

@@ -37,4 +37,5 @@
     <string name="copy_stop">PARAR</string>
     <string name="copy_off">cópia desligada</string>
     <string name="nomes_apelido">APELIDOS (J01…J10)</string>
+    <string name="label_delay">DELAY DO AVIÃO (MS)</string>
 </resources>
