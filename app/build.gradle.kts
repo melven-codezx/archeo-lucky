@@ -11,8 +11,8 @@ android {
         applicationId = "mz.kikocodex.archeolucky"
         minSdk = 24
         targetSdk = 34
-    versionCode = 19
-    versionName = "1.8"
+    versionCode = 20
+    versionName = "1.8.1"
     }
 
     buildTypes {

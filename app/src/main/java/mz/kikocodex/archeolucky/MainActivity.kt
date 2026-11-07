@@ -30,7 +30,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Archeo Lucky Browser  ·  v1.8 — JANELA REAL SEM DELAY (comparação lado a lado)
+ * Archeo Lucky Browser  ·  v1.8.1 — TOGGLE ATRASAR SAQUE (delay seletivo vs total)
  * ==============================================================
  *  1. Abre o Google num WebView;
  *  2. Detecta e anuncia os jogos:
@@ -45,6 +45,8 @@ import kotlin.math.roundToInt
  *  6. v1.8: JANELA REAL — botão "ABRIR JANELA SEM DELAY" abre 2ª WebView arrastável
  *     com o mesmo Aviator mas SEM delay, para comparar X em tempo real vs X atrasado.
  *     Login feito na 2ª janela compartilha cookies (mesma plataforma).
+ *  7. v1.8.1: ATRASAR SAQUE toggle — NÃO=seletivo (só chega, paga X real, seguro)
+ *     SIM=total (chega+vai com filtro bet/cashout, paga X exibido, FLEW AWAY atrasa)
  *
  * Engines automáticos (rodam DENTRO do frame do jogo):
  *   · Archéo   (SplitThePot, Angular+SVG) -> button[tile] / COMEÇAR / CASHOUT
@@ -89,6 +91,8 @@ class MainActivity : android.app.Activity() {
     private lateinit var btnNomes: TextView
     private lateinit var rowDelay: View
     private lateinit var delayValue: TextView
+    private lateinit var rowAtrasarSaque: View
+    private lateinit var btnAtrasarSaque: TextView
     private lateinit var rowComparar: View
     private lateinit var btnAbrirReal: TextView
     private lateinit var windowReal: LinearLayout
@@ -129,6 +133,7 @@ class MainActivity : android.app.Activity() {
     private var avNomes = "anon"               // anon | apelido
     private var stakeAviator = 100.0
     private var avDelay = 0                    // 0..5000 ms - NetLimiter moderno
+    private var avDelayTotal = false           // false=seletivo (só chega, paga X real), true=total (chega+vai, paga X exibido, crash atrasa)
 
     private val startUrl = "https://www.google.com/"
 
@@ -172,6 +177,8 @@ class MainActivity : android.app.Activity() {
         btnNomes = findViewById(R.id.btnNomes)
         rowDelay = findViewById(R.id.rowDelay)
         delayValue = findViewById(R.id.delayValue)
+        rowAtrasarSaque = findViewById(R.id.rowAtrasarSaque)
+        btnAtrasarSaque = findViewById(R.id.btnAtrasarSaque)
         rowComparar = findViewById(R.id.rowComparar)
         btnAbrirReal = findViewById(R.id.btnAbrirReal)
         windowReal = findViewById(R.id.windowReal)
@@ -195,6 +202,7 @@ class MainActivity : android.app.Activity() {
         refreshNomesLabel()
         refreshGaleUi()
         refreshDelayLabel()
+        refreshAtrasarSaqueUi()
         updatePanelVisibility()
 
         val deepLink = intent?.dataString
@@ -279,8 +287,8 @@ class MainActivity : android.app.Activity() {
                 super.onPageFinished(view, url)
                 realStatus.text = "TEMPO REAL — sem delay"
                 view?.evaluateJavascript(WATCHER_JS, null)
-                // garante que o delay fique em 0 nesta janela
-                view?.evaluateJavascript("try{ window.AV_DELAY=0; if(window.__setAvDelay) window.__setAvDelay(0); }catch(e){}", null)
+                // garante que o delay fique em 0 nesta janela (sempre seletivo 0ms)
+                view?.evaluateJavascript("try{ window.AV_DELAY=0; window.AV_DELAY_TOTAL=false; if(window.__setAvDelay) window.__setAvDelay(0); if(window.__setAvDelayTotal) window.__setAvDelayTotal(false); }catch(e){}", null)
             }
         }
         webViewReal.webChromeClient = object : WebChromeClient() {
@@ -414,6 +422,7 @@ class MainActivity : android.app.Activity() {
         rowRegra.visibility = if (av) View.VISIBLE else View.GONE
         rowNomes.visibility = if (av) View.VISIBLE else View.GONE
         rowDelay.visibility = if (av) View.VISIBLE else View.GONE
+        rowAtrasarSaque.visibility = if (av) View.VISIBLE else View.GONE
         rowComparar.visibility = if (av) View.VISIBLE else View.GONE
         rowMines.visibility = if (mm) View.VISIBLE else View.GONE
         rowClicks.visibility = if (av) View.GONE else View.VISIBLE
@@ -532,6 +541,13 @@ class MainActivity : android.app.Activity() {
                 avDelay = dl.coerceIn(0, 5000)
                 refreshDelayLabel()
             }
+            if (json.has("delayTotal")) {
+                val dt = json.optBoolean("delayTotal", avDelayTotal)
+                if (dt != avDelayTotal) {
+                    avDelayTotal = dt
+                    refreshAtrasarSaqueUi()
+                }
+            }
         }
         val ck = json.optInt("clicks", clicksPerSession)
         val mn = json.optInt("mines", minesCount)
@@ -552,7 +568,7 @@ class MainActivity : android.app.Activity() {
                 append("\nstake ").append(money(stake))
                 append(" · alvo ").append(String.format(Locale.US, "%.2f", alvo).replace(".", ",")).append("x")
                 append(" · ").append(if (avRegra == "sempre") "sempre" else "após baixa")
-                if (avDelay > 0) append(" · delay ").append(avDelay).append("ms")
+                if (avDelay > 0) append(" · delay ").append(avDelay).append("ms").append(if(avDelayTotal) " total" else " seletivo")
                 if (copyAlvo.isNotEmpty()) append("\nCOPY: ").append(copyAlvo)
             } else {
                 append("\nsessões: ").append(sessions)
@@ -719,6 +735,11 @@ class MainActivity : android.app.Activity() {
             avDelay = (avDelay + 500).coerceAtMost(5000)
             refreshDelayLabel(); pushSettings()
         }
+        btnAtrasarSaque.setOnClickListener {
+            avDelayTotal = !avDelayTotal
+            refreshAtrasarSaqueUi(); pushSettings()
+            Toast.makeText(this, if(avDelayTotal) "ATRASAR SAQUE SIM: delay total (paga X exibido, crash atrasa)" else "ATRASAR SAQUE NÃO: seletivo (paga X real)", Toast.LENGTH_LONG).show()
+        }
 
         btnCopy.setOnClickListener {
             if (copyAlvo.isNotEmpty()) {
@@ -793,6 +814,7 @@ class MainActivity : android.app.Activity() {
         sendToGame("setRegra", JSONObject().put("value", avRegra))
         sendToGame("setNomes", JSONObject().put("value", avNomes))
         sendToGame("setDelay", JSONObject().put("value", avDelay))
+        sendToGame("setDelayTotal", JSONObject().put("value", avDelayTotal))
         sendToGame("setGale", JSONObject().put("on", galeOn))
         sendToGame("setGaleMult", JSONObject().put("value", galeMult))
         sendToGame("setGaleLimit", JSONObject().put("value", galeLimit))
@@ -837,6 +859,12 @@ class MainActivity : android.app.Activity() {
     private fun refreshDelayLabel() {
         delayValue.text = if (avDelay == 0) "0 ms" else "${avDelay} ms"
         delayValue.setTextColor(getColor(if (avDelay > 0) R.color.gold else R.color.muted))
+    }
+
+    private fun refreshAtrasarSaqueUi() {
+        btnAtrasarSaque.text = getString(if (avDelayTotal) R.string.atrasar_sim else R.string.atrasar_nao)
+        btnAtrasarSaque.setTextColor(getColor(if (avDelayTotal) R.color.gold else R.color.muted))
+        btnAtrasarSaque.alpha = if (avDelayTotal) 1.0f else 0.85f
     }
 
     private fun refreshStakeLabel() {
@@ -963,10 +991,20 @@ class MainActivity : android.app.Activity() {
             if (window.__archeoLuckyWatcher) { return; }
             window.__archeoLuckyWatcher = true;
             var AV_DELAY = 0;
-            // === v1.7.1 NetLimiter UNIVERSAL ===
-            // Atrasa TUDO que CHEGA (onmessage / addEventListener message) por AV_DELAY.
-            // NÃO atrasa send() -> bet/cashout instantâneo.
-            // Patch em window + todos iframes (spribegaming) + prototype.
+            var AV_DELAY_TOTAL = false;
+            // === v1.8.1 NetLimiter com toggle ATRASAR SAQUE ===
+            // false (NÃO) = seletivo: atrasa só CHEGA (onmessage), send instantâneo → paga X real (seguro)
+            // true  (SIM) = total:    atrasa CHEGA + VAI (send bet/cashout) → paga X exibido, mas crash também atrasa no gráfico
+            function __isBetPayload(data){
+              try{
+                if(data==null) return false;
+                var s='';
+                if(typeof data==='string') s=data;
+                else if(data instanceof ArrayBuffer) { try{ s=new TextDecoder().decode(data); }catch(e){ s=''; } }
+                else { try{ s=String(data); }catch(e){ s=''; } }
+                return /cash\s*out|cashout|\"bet\"|bet|cash/i.test(s);
+              }catch(e){ return false; }
+            }
             function __patchWS(win){
               try{
                 if(!win || !win.WebSocket) return;
@@ -990,6 +1028,20 @@ class MainActivity : android.app.Activity() {
                     return origAdd.call(this, type, listener, opts);
                   };
                   proto.__patchedDelay = true;
+                  var origSend = proto.send;
+                  if(origSend && !origSend.__patchedDelay){
+                    proto.send = function(data){
+                      try{
+                        if(AV_DELAY>0 && AV_DELAY_TOTAL && __isBetPayload(data)){
+                          var self=this, args=arguments;
+                          setTimeout(function(){ try{ origSend.apply(self, args); }catch(e){} }, AV_DELAY);
+                          return;
+                        }
+                      }catch(e2){}
+                      return origSend.apply(this, arguments);
+                    };
+                    proto.send.__patchedDelay = true;
+                  }
                 }
                 try{
                   var desc = Object.getOwnPropertyDescriptor(proto, 'onmessage');
@@ -1017,6 +1069,22 @@ class MainActivity : android.app.Activity() {
                 }catch(e2){}
                 var WrappedWS = function(url, protocols){
                   var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+                  try{
+                    var origInstSend = ws.send;
+                    if(origInstSend && !origInstSend.__patchedDelay){
+                      ws.send = function(data){
+                        try{
+                          if(AV_DELAY>0 && AV_DELAY_TOTAL && __isBetPayload(data)){
+                            var self=this, args=arguments;
+                            setTimeout(function(){ try{ origInstSend.apply(self, args); }catch(e){} }, AV_DELAY);
+                            return;
+                          }
+                        }catch(e3){}
+                        return origInstSend.apply(this, arguments);
+                      };
+                      ws.send.__patchedDelay = true;
+                    }
+                  }catch(e3){}
                   return ws;
                 };
                 WrappedWS.prototype = proto;
@@ -1063,6 +1131,11 @@ class MainActivity : android.app.Activity() {
             window.__setAvDelay = function(v){
               AV_DELAY = Math.max(0, Math.min(5000, Number(v)||0));
               console.log('[AV_DELAY]', AV_DELAY);
+              try{ if(typeof report==='function') report(); }catch(e){}
+            };
+            window.__setAvDelayTotal = function(v){
+              AV_DELAY_TOTAL = !!v;
+              console.log('[AV_DELAY_TOTAL]', AV_DELAY_TOTAL);
               try{ if(typeof report==='function') report(); }catch(e){}
             };
             function all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
@@ -1128,7 +1201,7 @@ class MainActivity : android.app.Activity() {
               post({ type: 'auto', game: game(), running: AUTO.running, sessions: AUTO.sessions,
                      wins: AUTO.wins, losses: AUTO.losses, stake: AUTO.stake,
                      clicks: AUTO.clicks, mines: AUTO.mines, alvo: AUTO.alvo,
-                     regra: AUTO.regra, nomes: AUTO.nomes, velas: AUTO.velas, delay: AV_DELAY,
+                     regra: AUTO.regra, nomes: AUTO.nomes, velas: AUTO.velas, delay: AV_DELAY, delayTotal: AV_DELAY_TOTAL,
                      galeStep: AUTO.galeStep, galeOn: AUTO.galeOn });
               try {
                 if (game() === 'mimines') {
@@ -1845,6 +1918,10 @@ class MainActivity : android.app.Activity() {
                 case 'setDelay':
                   AV_DELAY = Math.max(0, Math.min(5000, Number(d.value)||0));
                   if (window.__setAvDelay) try { window.__setAvDelay(AV_DELAY); } catch(e){}
+                  report(); return true;
+                case 'setDelayTotal':
+                  AV_DELAY_TOTAL = !!d.value;
+                  if (window.__setAvDelayTotal) try { window.__setAvDelayTotal(AV_DELAY_TOTAL); } catch(e){}
                   report(); return true;
                 case 'setClicks':
                   AUTO.clicks = Math.min(24, Math.max(1, Number(d.value) || 3));

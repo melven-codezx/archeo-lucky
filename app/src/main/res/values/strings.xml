@@ -38,6 +38,9 @@
     <string name="copy_off">cópia desligada</string>
     <string name="nomes_apelido">APELIDOS (J01…J10)</string>
     <string name="label_delay">DELAY DO AVIÃO (MS)</string>
+    <string name="label_atrasar_saque">ATRASAR SAQUE (CASHOUT) — MODO DELAY</string>
+    <string name="atrasar_nao">NÃO — paga X real (seguro)</string>
+    <string name="atrasar_sim">SIM — paga X exibido (crash também atrasa)</string>
     <string name="label_comparar">COMPARAR TEMPO REAL</string>
     <string name="btn_abrir_real">⧉ ABRIR JANELA SEM DELAY</string>
     <string name="btn_fechar_real">✕ FECHAR JANELA REAL</string>
