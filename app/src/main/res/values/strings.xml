@@ -38,4 +38,9 @@
     <string name="copy_off">cópia desligada</string>
     <string name="nomes_apelido">APELIDOS (J01…J10)</string>
     <string name="label_delay">DELAY DO AVIÃO (MS)</string>
+    <string name="label_comparar">COMPARAR TEMPO REAL</string>
+    <string name="btn_abrir_real">⧉ ABRIR JANELA SEM DELAY</string>
+    <string name="btn_fechar_real">✕ FECHAR JANELA REAL</string>
+    <string name="window_real_title">✈️ TEMPO REAL — SEM DELAY</string>
+    <string name="window_real_sub">Arraste para mover • login na PrideBet aqui</string>
 </resources>

@@ -30,7 +30,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Archeo Lucky Browser  ·  v1.7.1 — DELAY Aviator UNIVERSAL + IFRAME (NetLimiter moderno)
+ * Archeo Lucky Browser  ·  v1.8 — JANELA REAL SEM DELAY (comparação lado a lado)
  * ==============================================================
  *  1. Abre o Google num WebView;
  *  2. Detecta e anuncia os jogos:
@@ -42,6 +42,9 @@ import kotlin.math.roundToInt
  *  5. v1.7.1: DELAY universal (0-5000ms) — atrasa TUDO que VEM do servidor (message),
  *     não atrasa nada que VAI (send/bet/cashout) — avião lento, clique instantâneo.
  *     Patch aplicado no window + todos iframes (spribegaming) + prototype.
+ *  6. v1.8: JANELA REAL — botão "ABRIR JANELA SEM DELAY" abre 2ª WebView arrastável
+ *     com o mesmo Aviator mas SEM delay, para comparar X em tempo real vs X atrasado.
+ *     Login feito na 2ª janela compartilha cookies (mesma plataforma).
  *
  * Engines automáticos (rodam DENTRO do frame do jogo):
  *   · Archéo   (SplitThePot, Angular+SVG) -> button[tile] / COMEÇAR / CASHOUT
@@ -86,6 +89,12 @@ class MainActivity : android.app.Activity() {
     private lateinit var btnNomes: TextView
     private lateinit var rowDelay: View
     private lateinit var delayValue: TextView
+    private lateinit var rowComparar: View
+    private lateinit var btnAbrirReal: TextView
+    private lateinit var windowReal: LinearLayout
+    private lateinit var webViewReal: WebView
+    private lateinit var windowRealHeader: View
+    private lateinit var realStatus: TextView
 
     private val ui = Handler(Looper.getMainLooper())
     private var lastToastGame: String? = null
@@ -163,12 +172,20 @@ class MainActivity : android.app.Activity() {
         btnNomes = findViewById(R.id.btnNomes)
         rowDelay = findViewById(R.id.rowDelay)
         delayValue = findViewById(R.id.delayValue)
+        rowComparar = findViewById(R.id.rowComparar)
+        btnAbrirReal = findViewById(R.id.btnAbrirReal)
+        windowReal = findViewById(R.id.windowReal)
+        webViewReal = findViewById(R.id.webviewReal)
+        windowRealHeader = findViewById(R.id.windowRealHeader)
+        realStatus = findViewById(R.id.realStatus)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setupWebView()
+        setupWebViewReal()
         installRealtimeBridge()
         setupFloatingPanel()
+        setupRealWindow()
 
         refreshStakeLabel()
         refreshClicksLabel()
@@ -233,6 +250,95 @@ class MainActivity : android.app.Activity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean = true
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWebViewReal() {
+        val s = webViewReal.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.databaseEnabled = true
+        s.javaScriptCanOpenWindowsAutomatically = true
+        s.mediaPlaybackRequiresUserGesture = false
+        s.loadWithOverviewMode = true
+        s.useWideViewPort = true
+        s.setSupportMultipleWindows(false)
+        s.cacheMode = WebSettings.LOAD_DEFAULT
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        s.userAgentString?.let { ua ->
+            if (ua.contains("; wv")) s.userAgentString = ua.replace("; wv", "")
+        }
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webViewReal, true)
+        webViewReal.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                realStatus.text = "carregando..."
+            }
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                realStatus.text = "TEMPO REAL — sem delay"
+                view?.evaluateJavascript(WATCHER_JS, null)
+                // garante que o delay fique em 0 nesta janela
+                view?.evaluateJavascript("try{ window.AV_DELAY=0; if(window.__setAvDelay) window.__setAvDelay(0); }catch(e){}", null)
+            }
+        }
+        webViewReal.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean = true
+        }
+    }
+
+    private fun setupRealWindow() {
+        btnAbrirReal.setOnClickListener { toggleRealWindow() }
+        findViewById<TextView>(R.id.btnFecharReal).setOnClickListener { toggleRealWindow() }
+        windowRealHeader.setOnTouchListener(DragListenerReal())
+    }
+
+    private fun toggleRealWindow() {
+        if (windowReal.visibility == View.VISIBLE) {
+            windowReal.visibility = View.GONE
+            btnAbrirReal.text = getString(R.string.btn_abrir_real)
+        } else {
+            windowReal.visibility = View.VISIBLE
+            windowReal.bringToFront()
+            btnAbrirReal.text = getString(R.string.btn_fechar_real)
+            val target = when {
+                detectedGame == GAME_AVIATOR -> "https://pridebet.co.mz/games/Aviator-10"
+                else -> "https://pridebet.co.mz/aviator"
+            }
+            if (webViewReal.url.isNullOrBlank() || webViewReal.url == "about:blank") {
+                webViewReal.loadUrl(target)
+                Toast.makeText(this, "Janela real aberta — faça login aqui se precisar", Toast.LENGTH_SHORT).show()
+            }
+            realStatus.text = "TEMPO REAL — sem delay • X subindo aqui é o real"
+        }
+    }
+
+    private inner class DragListenerReal : View.OnTouchListener {
+        private var dx = 0f
+        private var dy = 0f
+        private var downX = 0f
+        private var downY = 0f
+        private var moved = false
+        override fun onTouch(v: View, e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY
+                    dx = windowReal.x - e.rawX; dy = windowReal.y - e.rawY
+                    moved = false
+                    return true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (kotlin.math.abs(e.rawX - downX) > 8f || kotlin.math.abs(e.rawY - downY) > 8f) moved = true
+                    val maxX = (root.width - windowReal.width).coerceAtLeast(0).toFloat()
+                    val maxY = (root.height - windowReal.height).coerceAtLeast(0).toFloat()
+                    windowReal.x = (e.rawX + dx).coerceIn(0f, maxX)
+                    windowReal.y = (e.rawY + dy).coerceIn(0f, maxY)
+                    return true
+                }
+                MotionEvent.ACTION_UP -> return true
+            }
+            return false
         }
     }
 
@@ -308,6 +414,7 @@ class MainActivity : android.app.Activity() {
         rowRegra.visibility = if (av) View.VISIBLE else View.GONE
         rowNomes.visibility = if (av) View.VISIBLE else View.GONE
         rowDelay.visibility = if (av) View.VISIBLE else View.GONE
+        rowComparar.visibility = if (av) View.VISIBLE else View.GONE
         rowMines.visibility = if (mm) View.VISIBLE else View.GONE
         rowClicks.visibility = if (av) View.GONE else View.VISIBLE
         rowGale.visibility = if (av) View.GONE else View.VISIBLE
@@ -824,6 +931,10 @@ class MainActivity : android.app.Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            windowReal.visibility == View.VISIBLE -> {
+                windowReal.visibility = View.GONE
+                btnAbrirReal.text = getString(R.string.btn_abrir_real)
+            }
             panel.visibility == View.VISIBLE -> panel.visibility = View.GONE
             webView.canGoBack() -> webView.goBack()
             else -> {
@@ -836,6 +947,7 @@ class MainActivity : android.app.Activity() {
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
         webView.destroy()
+        try { webViewReal.destroy() } catch(_: Exception) {}
         super.onDestroy()
     }
 
