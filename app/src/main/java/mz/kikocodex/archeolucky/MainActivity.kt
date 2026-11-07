@@ -30,7 +30,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Archeo Lucky Browser  ·  v1.7 — DELAY Aviator (NetLimiter moderno)
+ * Archeo Lucky Browser  ·  v1.7.1 — DELAY Aviator UNIVERSAL + IFRAME (NetLimiter moderno)
  * ==============================================================
  *  1. Abre o Google num WebView;
  *  2. Detecta e anuncia os jogos:
@@ -39,13 +39,14 @@ import kotlin.math.roundToInt
  *       · AVIATOR     -> toast "Aviator Carregado ✅✅"
  *  3. HUD com o SALDO em tempo real (FUN no Archéo, MZN no Mi Mines/Aviator);
  *  4. Janela flutuante "G" com stake, nº de cliques, nº de minas e operação automática;
- *  5. NOVO v1.7: DELAY do avião (0-5000ms) só no que VEM do servidor (coefficient),
- *     não atrasa bet/cashout — avião lento, clique rápido.
+ *  5. v1.7.1: DELAY universal (0-5000ms) — atrasa TUDO que VEM do servidor (message),
+ *     não atrasa nada que VAI (send/bet/cashout) — avião lento, clique instantâneo.
+ *     Patch aplicado no window + todos iframes (spribegaming) + prototype.
  *
  * Engines automáticos (rodam DENTRO do frame do jogo):
  *   · Archéo   (SplitThePot, Angular+SVG) -> button[tile] / COMEÇAR / CASHOUT
  *   · Mi Mines (Spribe, canvas 5x5)       -> canvas hit-test por coordenada + BET / CASH OUT
- *   · Aviator  (Spribe, SignalR)          -> leitura da fita de payouts + delay WS seletivo
+ *   · Aviator  (Spribe, SignalR)          -> leitura da fita de payouts + delay WS universal
  */
 class MainActivity : android.app.Activity() {
 
@@ -850,45 +851,87 @@ class MainActivity : android.app.Activity() {
             if (window.__archeoLuckyWatcher) { return; }
             window.__archeoLuckyWatcher = true;
             var AV_DELAY = 0;
-            // === NetLimiter moderno (Aviator) - delay seletivo ===
-            // Atrasa só o que VEM do servidor (coefficient/multiplier), não o que VAI (bet/cashout).
-            // O jogo fica em câmera lenta mas seu toque de apostar/sacar chega na hora.
-            try {
-              (function(){
-                var OrigWS = window.WebSocket;
-                if (!OrigWS || OrigWS.__patchedDelay) return;
-                function isCoeff(d){
-                  if (typeof d !== 'string') return false;
-                  return d.indexOf('coefficient') !== -1 || d.indexOf('multiplier') !== -1 || d.indexOf('"c":') !== -1 || d.indexOf('payout') !== -1;
-                }
-                window.WebSocket = function(url, protocols){
-                  var ws = new OrigWS(url, protocols);
-                  var origAdd = ws.addEventListener.bind(ws);
-                  ws.addEventListener = function(type, listener, opts){
-                    if (type === 'message' && AV_DELAY > 0){
+            // === v1.7.1 NetLimiter UNIVERSAL ===
+            // Atrasa TUDO que CHEGA (onmessage / addEventListener message) por AV_DELAY.
+            // NÃO atrasa send() -> bet/cashout instantâneo.
+            // Patch em window + todos iframes (spribegaming) + prototype.
+            function __patchWS(win){
+              try{
+                if(!win || !win.WebSocket) return;
+                if(win.WebSocket.__patchedDelay) return;
+                var OrigWS = win.WebSocket;
+                var proto = OrigWS.prototype;
+                if(proto && !proto.__patchedDelay){
+                  var origAdd = proto.addEventListener;
+                  proto.addEventListener = function(type, listener, opts){
+                    if(type==='message' && typeof listener==='function'){
+                      var orig = listener;
                       var wrapped = function(ev){
-                        var data = ev.data;
-                        if (typeof data === 'string' && isCoeff(data)){
-                          ev.stopImmediatePropagation();
-                          setTimeout(function(){
-                            try { listener.call(ws, new MessageEvent('message', {data: data})); } catch(e){ listener.call(ws, ev); }
-                            if (ws.onmessage) try { ws.onmessage(new MessageEvent('message', {data: data})); } catch(e){}
-                          }, AV_DELAY);
-                          return;
-                        }
-                        listener.call(ws, ev);
+                        if(AV_DELAY>0){
+                          var self=this, a=arguments;
+                          setTimeout(function(){ try{ orig.apply(self, a); }catch(e){} }, AV_DELAY);
+                        } else orig.apply(this, arguments);
                       };
-                      return origAdd(type, wrapped, opts);
+                      wrapped.__orig = orig;
+                      return origAdd.call(this, type, wrapped, opts);
                     }
-                    return origAdd(type, listener, opts);
+                    return origAdd.call(this, type, listener, opts);
                   };
+                  proto.__patchedDelay = true;
+                }
+                try{
+                  var desc = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+                  if(desc && desc.set && !desc.set.__patchedDelay){
+                    var oSet = desc.set, oGet = desc.get;
+                    Object.defineProperty(proto, 'onmessage', {
+                      get: oGet,
+                      set: function(fn){
+                        if(typeof fn==='function'){
+                          var origFn = fn;
+                          var wrapped = function(ev){
+                            if(AV_DELAY>0){
+                              var self=this;
+                              setTimeout(function(){ try{ origFn.call(self, ev); }catch(e){} }, AV_DELAY);
+                            } else origFn.call(this, ev);
+                          };
+                          wrapped.__orig = origFn;
+                          oSet.call(this, wrapped);
+                        } else oSet.call(this, fn);
+                      },
+                      configurable:true
+                    });
+                    desc.set.__patchedDelay = true;
+                  }
+                }catch(e2){}
+                var WrappedWS = function(url, protocols){
+                  var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
                   return ws;
                 };
-                window.WebSocket.prototype = OrigWS.prototype;
-                window.WebSocket.__patchedDelay = true;
-                window.__setAvDelay = function(v){ AV_DELAY = Math.max(0, Math.min(5000, Number(v)||0)); post({type:'auto', game: game(), delay: AV_DELAY, running: AUTO.running, stake: AUTO.stake, clicks: AUTO.clicks, mines: AUTO.mines, alvo: AUTO.alvo, regra: AUTO.regra, nomes: AUTO.nomes, velas: AUTO.velas, galeStep: AUTO.galeStep}); };
-              })();
-            } catch(e){}
+                WrappedWS.prototype = proto;
+                WrappedWS.__patchedDelay = true;
+                try{ Object.setPrototypeOf(WrappedWS, OrigWS); }catch(e){}
+                win.WebSocket = WrappedWS;
+              }catch(e){}
+            }
+            try{ __patchWS(window); }catch(e){}
+            try{
+              var __obs = new MutationObserver(function(muts){
+                muts.forEach(function(mu){
+                  (mu.addedNodes||[]).forEach(function(n){
+                    if(n.tagName==='IFRAME' && n.contentWindow) try{ __patchWS(n.contentWindow); }catch(e){}
+                  });
+                });
+              });
+              __obs.observe(document.documentElement, {childList:true, subtree:true});
+            }catch(e){}
+            setInterval(function(){
+              try{
+                document.querySelectorAll('iframe').forEach(function(f){
+                  try{ if(f.contentWindow) __patchWS(f.contentWindow); }catch(e){}
+                });
+                __patchWS(window);
+              }catch(e){}
+            }, 800);
 
             var BRIDGE = 'ArcheoBridge';
             var AUTO = { running: false, stake: 1, clicks: 3, mines: 3,
@@ -905,6 +948,11 @@ class MainActivity : android.app.Activity() {
             function post(o) {
               try { var b = window[BRIDGE]; if (b && b.postMessage) { b.postMessage(JSON.stringify(o)); } } catch (e) {}
             }
+            window.__setAvDelay = function(v){
+              AV_DELAY = Math.max(0, Math.min(5000, Number(v)||0));
+              console.log('[AV_DELAY]', AV_DELAY);
+              try{ if(typeof report==='function') report(); }catch(e){}
+            };
             function all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
             function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
             function money2(v) {
