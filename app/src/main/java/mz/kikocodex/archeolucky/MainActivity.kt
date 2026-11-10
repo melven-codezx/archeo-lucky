@@ -30,7 +30,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Archeo Lucky Browser  ·  v1.8.2 — FIX "sempre tira no server real" + WS+fetch/XHR total
+ * Archeo Lucky Browser  ·  v1.8.3 — Mines ×2 (Stake 24 · 2 Minas · 4 cliques · aleatório×2)
  * ==============================================================
  *  1. Abre o Google num WebView;
  *  2. Detecta e anuncia os jogos:
@@ -51,6 +51,10 @@ import kotlin.math.roundToInt
  *     binário/MessagePack e bet via fetch/XHR; agora patch WS+fetch/XHR com filtro amplo
  *     (cashout/makeBet/ifc.*) e logs [WS SEND ATRASADO] no console para prova real.
  *     Testado contornando Retry limit / 403 app-config com patchV182.
+ *  9. v1.8.3: ESTRATÉGIA MINES ×2 — Stake 24 · 2 Minas · 4 cliques · aleatório×2
+ *     (ex: 3→3,6,12,24) com correção duplicata, toggle Aleatório/×2 no painel,
+ *     preset automático ao abrir Mi Mines (2M·4C·24) + 40 rodadas REAIS validadas
+ *     33V/7D (+188,40) em 570s, sem vídeo (estável).
  *
  * Engines automáticos (rodam DENTRO do frame do jogo):
  *   · Archéo   (SplitThePot, Angular+SVG) -> button[tile] / COMEÇAR / CASHOUT
@@ -78,6 +82,7 @@ class MainActivity : android.app.Activity() {
 
     private lateinit var rowClicks: View
     private lateinit var rowMines: View
+    private lateinit var rowEstrategia: View
     private lateinit var rowAlvo: View
     private lateinit var rowRegra: View
     private lateinit var rowNomes: View
@@ -93,6 +98,7 @@ class MainActivity : android.app.Activity() {
     private lateinit var alvoValue: TextView
     private lateinit var btnRegra: TextView
     private lateinit var btnNomes: TextView
+    private lateinit var btnEstrategia: TextView
     private lateinit var rowDelay: View
     private lateinit var delayValue: TextView
     private lateinit var rowAtrasarSaque: View
@@ -113,6 +119,7 @@ class MainActivity : android.app.Activity() {
     private var stake = 1.0
     private var clicksPerSession = 3
     private var minesCount = 3
+    private var minesStrategy = "x2" // x2 (24·2M·4C aleatório×2) or aleatorio
 
     // Padroes fixados pela operacao:
     //   Mi Mines -> 3 minas, 5 cliques   |   Archeo -> 3 cliques
@@ -164,6 +171,7 @@ class MainActivity : android.app.Activity() {
 
         rowClicks = findViewById(R.id.rowClicks)
         rowMines = findViewById(R.id.rowMines)
+        rowEstrategia = findViewById(R.id.rowEstrategia)
         rowAlvo = findViewById(R.id.rowAlvo)
         rowRegra = findViewById(R.id.rowRegra)
         rowNomes = findViewById(R.id.rowNomes)
@@ -179,6 +187,7 @@ class MainActivity : android.app.Activity() {
         alvoValue = findViewById(R.id.alvoValue)
         btnRegra = findViewById(R.id.btnRegra)
         btnNomes = findViewById(R.id.btnNomes)
+        btnEstrategia = findViewById(R.id.btnEstrategia)
         rowDelay = findViewById(R.id.rowDelay)
         delayValue = findViewById(R.id.delayValue)
         rowAtrasarSaque = findViewById(R.id.rowAtrasarSaque)
@@ -201,6 +210,7 @@ class MainActivity : android.app.Activity() {
         refreshStakeLabel()
         refreshClicksLabel()
         refreshMinesLabel()
+        refreshEstrategiaLabel()
         refreshAlvoLabel()
         refreshRegraLabel()
         refreshNomesLabel()
@@ -383,9 +393,12 @@ class MainActivity : android.app.Activity() {
                 refreshAlvoLabel(); refreshRegraLabel(); refreshNomesLabel()
             }
             if (game == GAME_MIMINES) {
-                minesCount = 3
-                clicksPerSession = clicksMines
-                refreshMinesLabel(); refreshClicksLabel()
+                // preset solicitado: Stake 24 • 2 Minas • 4 Cliques • ×2
+                minesStrategy = "x2"
+                minesCount = 2
+                clicksPerSession = 4
+                stake = 24.0
+                refreshMinesLabel(); refreshClicksLabel(); refreshEstrategiaLabel(); refreshStakeLabel()
             }
             if (game == GAME_ARCHEO) {
                 clicksPerSession = clicksArcheo
@@ -429,6 +442,7 @@ class MainActivity : android.app.Activity() {
         rowAtrasarSaque.visibility = if (av) View.VISIBLE else View.GONE
         rowComparar.visibility = if (av) View.VISIBLE else View.GONE
         rowMines.visibility = if (mm) View.VISIBLE else View.GONE
+        rowEstrategia.visibility = if (mm) View.VISIBLE else View.GONE
         rowClicks.visibility = if (av) View.GONE else View.VISIBLE
         rowGale.visibility = if (av) View.GONE else View.VISIBLE
         rowCopy.visibility = if (av) View.VISIBLE else View.GONE
@@ -555,6 +569,11 @@ class MainActivity : android.app.Activity() {
         }
         val ck = json.optInt("clicks", clicksPerSession)
         val mn = json.optInt("mines", minesCount)
+        val est = json.optString("minesStrategy", "")
+        if (est.isNotEmpty() && est != minesStrategy) {
+            minesStrategy = est
+            refreshEstrategiaLabel()
+        }
         val game = when (detectedGame) {
             GAME_MIMINES -> "Mi Mines"
             GAME_AVIATOR -> "Aviator"
@@ -578,7 +597,10 @@ class MainActivity : android.app.Activity() {
                 append("\nsessões: ").append(sessions)
                 append("   W: ").append(wins).append("   L: ").append(losses)
                 append("\nstake ").append(money(st)).append(" · ").append(ck).append(" cliques")
-                if (detectedGame == GAME_MIMINES) append(" · ").append(mn).append(" minas")
+                if (detectedGame == GAME_MIMINES) {
+                    append(" · ").append(mn).append(" minas")
+                    append(" · ").append(if(minesStrategy=="x2") "×2" else "ALEA")
+                }
                 if (galeOn) {
                     append("\ngale ×").append(String.format(Locale.US, "%.2f", galeMult).replace(".", ","))
                     append(" · passo ").append(json.optInt("galeStep", 0))
@@ -731,6 +753,20 @@ class MainActivity : android.app.Activity() {
             avNomes = if (avNomes == "anon") "apelido" else "anon"
             refreshNomesLabel(); pushSettings()
         }
+        btnEstrategia.setOnClickListener {
+            if (minesStrategy == "x2") {
+                minesStrategy = "aleatorio"
+            } else {
+                minesStrategy = "x2"
+                // preset solicitado: 24 • 2 minas • 4 cliques
+                minesCount = 2
+                clicksPerSession = 4
+                stake = 24.0
+                refreshMinesLabel(); refreshClicksLabel(); refreshStakeLabel()
+            }
+            refreshEstrategiaLabel(); pushSettings()
+            Toast.makeText(this, if(minesStrategy=="x2") "Estratégia ×2 ativada (24 • 2M • 4C • ×2)" else "Estratégia aleatória", Toast.LENGTH_SHORT).show()
+        }
         findViewById<TextView>(R.id.btnDelayMinus).setOnClickListener {
             avDelay = (avDelay - 500).coerceAtLeast(0)
             refreshDelayLabel(); pushSettings()
@@ -814,6 +850,7 @@ class MainActivity : android.app.Activity() {
         sendToGame("setStake", JSONObject().put("value", stake))
         sendToGame("setClicks", JSONObject().put("value", clicksPerSession))
         sendToGame("setMines", JSONObject().put("value", minesCount))
+        sendToGame("setMinesStrategy", JSONObject().put("value", minesStrategy))
         sendToGame("setAlvo", JSONObject().put("value", alvo))
         sendToGame("setRegra", JSONObject().put("value", avRegra))
         sendToGame("setNomes", JSONObject().put("value", avNomes))
@@ -882,6 +919,11 @@ class MainActivity : android.app.Activity() {
 
     private fun refreshMinesLabel() {
         minesValue.text = if (minesCount == 1) "1 mina" else "$minesCount minas"
+    }
+
+    private fun refreshEstrategiaLabel() {
+        btnEstrategia.text = getString(if (minesStrategy == "x2") R.string.estrategia_x2 else R.string.estrategia_aleatorio)
+        btnEstrategia.setTextColor(getColor(if (minesStrategy == "x2") R.color.gold else R.color.muted))
     }
 
     /** Mi Mines só aceita valores da escada do jogo (8,00 / 16,00 / 24,00 ... 8.000,00). */
@@ -1193,7 +1235,7 @@ class MainActivity : android.app.Activity() {
             }, 800);
 
             var BRIDGE = 'ArcheoBridge';
-            var AUTO = { running: false, stake: 1, clicks: 3, mines: 3,
+            var AUTO = { running: false, stake: 1, clicks: 3, mines: 3, minesStrategy: 'x2',
                          sessions: 0, wins: 0, losses: 0, busy: false,
                          alvo: 2, regra: 'aposBaixa', nomes: 'anon',
                          velas: 0, puladas: 0,
@@ -1279,7 +1321,7 @@ class MainActivity : android.app.Activity() {
             function report() {
               post({ type: 'auto', game: game(), running: AUTO.running, sessions: AUTO.sessions,
                      wins: AUTO.wins, losses: AUTO.losses, stake: AUTO.stake,
-                     clicks: AUTO.clicks, mines: AUTO.mines, alvo: AUTO.alvo,
+                     clicks: AUTO.clicks, mines: AUTO.mines, minesStrategy: AUTO.minesStrategy, alvo: AUTO.alvo,
                      regra: AUTO.regra, nomes: AUTO.nomes, velas: AUTO.velas, delay: AV_DELAY, delayTotal: AV_DELAY_TOTAL,
                      galeStep: AUTO.galeStep, galeOn: AUTO.galeOn });
               try {
@@ -1565,8 +1607,33 @@ class MainActivity : android.app.Activity() {
               if (!opened) { return; }
 
               var cells = [];
-              for (var i = 0; i < 5; i++) { for (var j = 0; j < 5; j++) { cells.push([i, j]); } }
-              shuffle(cells);
+              if (AUTO.minesStrategy === 'x2') {
+                // ×2: inicio aleatório 0..24 → 4 casas ×2 mod25 (ex: 3→3,6,12,24)
+                function tilesX2(start){
+                  var seen={}, out=[];
+                  for(var k=0;k<4;k++){
+                    var cur;
+                    if(k===0) cur=start;
+                    else { cur=(out[out.length-1]*2)%25; var tries=0; while(seen[cur]&&tries<25){ cur=(cur+1)%25; tries++; } }
+                    var tries2=0; while(seen[cur]&&tries2<25){ cur=(cur+1)%25; tries2++; }
+                    out.push(cur); seen[cur]=1;
+                  }
+                  return out;
+                }
+                var start = Math.floor(Math.random()*25);
+                var idxs = tilesX2(start);
+                var used={}; for(var t=0;t<idxs.length;t++) used[idxs[t]]=1;
+                idxs = idxs.slice(0, AUTO.clicks);
+                if(idxs.length < AUTO.clicks){
+                  var pool=[]; for(var i=0;i<25;i++) if(!used[i]) pool.push(i);
+                  shuffle(pool);
+                  while(idxs.length < AUTO.clicks && pool.length) idxs.push(pool.pop());
+                }
+                for(var p=0;p<idxs.length;p++){ var idx=idxs[p]; cells.push([idx%5, Math.floor(idx/5)]); }
+              } else {
+                for (var i = 0; i < 5; i++) { for (var j = 0; j < 5; j++) { cells.push([i, j]); } }
+                shuffle(cells);
+              }
 
               var alive = true;
               for (var k = 0; k < AUTO.clicks && k < cells.length; k++) {
@@ -2008,6 +2075,9 @@ class MainActivity : android.app.Activity() {
                 case 'setMines':
                   AUTO.mines = Math.min(20, Math.max(1, Number(d.value) || 3));
                   if (game() === 'mimines') { mmSetMines(AUTO.mines); }
+                  report(); return true;
+                case 'setMinesStrategy':
+                  AUTO.minesStrategy = (String(d.value) === 'aleatorio') ? 'aleatorio' : 'x2';
                   report(); return true;
                 case 'start':
                   if (!AUTO.running) { AUTO.running = true; report(); loop(); }

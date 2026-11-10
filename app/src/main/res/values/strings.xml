@@ -46,4 +46,7 @@
     <string name="btn_fechar_real">✕ FECHAR JANELA REAL</string>
     <string name="window_real_title">✈️ TEMPO REAL — SEM DELAY</string>
     <string name="window_real_sub">Arraste para mover • login na PrideBet aqui</string>
+    <string name="label_estrategia">ESTRATÉGIA (MI MINES)</string>
+    <string name="estrategia_aleatorio">ALEATÓRIO</string>
+    <string name="estrategia_x2">×2 (24 • 2M • 4C)</string>
 </resources>

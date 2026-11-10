@@ -280,6 +280,36 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <!-- ===== ESTRATÉGIA (Mi Mines) — ×2 preset 24/2M/4C ===== -->
+            <LinearLayout
+                android:id="@+id/rowEstrategia"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:letterSpacing="0.1"
+                    android:text="@string/label_estrategia"
+                    android:textColor="@color/muted"
+                    android:textSize="9sp" />
+
+                <TextView
+                    android:id="@+id/btnEstrategia"
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:layout_marginTop="5dp"
+                    android:background="@drawable/field_background"
+                    android:fontFamily="sans-serif-black"
+                    android:gravity="center"
+                    android:text="@string/estrategia_x2"
+                    android:textColor="@color/gold"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
             <!-- ===== CLIQUES POR SESSÃO (Archéo / Mi Mines) ===== -->
             <LinearLayout
                 android:id="@+id/rowClicks"
